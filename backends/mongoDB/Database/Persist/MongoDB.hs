@@ -1,4 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PackageImports, RankNTypes #-}
 -- | A redis backend for persistent.
 module Database.Persist.MongoDB
@@ -26,6 +28,10 @@ import Data.UString (u)
 import qualified Data.CompactString.UTF8 as CS
 import Data.Enumerator hiding (map, length)
 -- import Data.Maybe (fromMaybe, mapMaybe, fromJust)
+import Control.Monad.Throw
+import Control.Monad.Error (runErrorT)
+import Control.Exception (throwIO)
+import qualified System.IO.Error as IO
 
 host = DB.host
 type Connection = DB.Connection
@@ -42,11 +48,16 @@ runMongoDBConn :: MonadCatchIO m => MongoDBReader m a -> DB.Connection -> m a
 runMongoDBConn (MongoDBReader r) conn = do
   runReaderT r conn
 
--- withMongoDBConn :: MonadCatchIO m => String -> DB.Host -> (DB.Connection -> SqlPersist m a) -> m a
-withMongoDBConn dbname connectionSettings connectionReader =
-  DB.runNet $ do
-    conn <- DB.connect connectionSettings
-    connectionReader conn -- $ (flip DB.runConn) conn (DB.useDb dbname)
+newtype IO' a = IO' { runIO' :: IO a }
+    deriving (Functor, Applicative, Monad, MonadIO)
+instance Throw IOError IO' where
+    throw = IO' . throwIO
+    catch (IO' f) onErr = IO' $ IO.catch f (runIO' . onErr)
+
+withMongoDBConn :: MonadIO m => String -> DB.Host -> (DB.Connection -> m a) -> m a
+withMongoDBConn _FIXMEdbname connectionSettings connectionReader = do
+    conn <- liftIO $ runIO' $ DB.connect connectionSettings
+    connectionReader conn
 
 -- TODO: user specifies database!
 runConn conn action =
